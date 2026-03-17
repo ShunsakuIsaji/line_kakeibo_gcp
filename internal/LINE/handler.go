@@ -2,18 +2,21 @@ package line
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
 	gcs "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/GCS"
-
+	pubsub "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/PubSub"
 	"github.com/line/line-bot-sdk-go/v8/linebot"
 )
 
 type Handler struct {
-	Bot        *linebot.Client
-	BucketName string
+	Bot           *linebot.Client
+	BucketName    string
+	GcpProjectID  string
+	PubSubTopicID string
 }
 
 func (h *Handler) HandleEventAPI(ctx context.Context, event *linebot.Event) error {
@@ -42,6 +45,20 @@ func (h *Handler) HandleEventAPI(ctx context.Context, event *linebot.Event) erro
 			return err
 		}
 
+		publishMessage, err := getPublishMessageFromEvent(event)
+		if err != nil {
+			return err
+		}
+		payload, err := json.Marshal(publishMessage)
+		if err != nil {
+			return err
+		}
+
+		err = pubsub.PublishMessage(ctx, h.GcpProjectID, h.PubSubTopicID, payload)
+		if err != nil {
+			return err
+		}
+
 		_, err = h.Bot.ReplyMessage(
 			event.ReplyToken,
 			linebot.NewTextMessage("レシート受け取ったで"),
@@ -53,7 +70,21 @@ func (h *Handler) HandleEventAPI(ctx context.Context, event *linebot.Event) erro
 
 		log.Printf("text received: %s", msg.Text)
 
-		_, err := h.Bot.ReplyMessage(
+		publishMessage, err := getPublishMessageFromEvent(event)
+		if err != nil {
+			return err
+		}
+		payload, err := json.Marshal(publishMessage)
+		if err != nil {
+			return err
+		}
+
+		err = pubsub.PublishMessage(ctx, h.GcpProjectID, h.PubSubTopicID, payload)
+		if err != nil {
+			return err
+		}
+
+		_, err = h.Bot.ReplyMessage(
 			event.ReplyToken,
 			linebot.NewTextMessage("テキストはまだ対応してないで"),
 		).Do()
@@ -66,4 +97,31 @@ func (h *Handler) HandleEventAPI(ctx context.Context, event *linebot.Event) erro
 	}
 
 	return nil
+}
+
+func getPublishMessageFromEvent(event *linebot.Event) (*pubsub.PubSubMessage, error) {
+	if event.Source == nil || event.Source.UserID == "" {
+		return nil, fmt.Errorf("invalid event source")
+	}
+	switch msg := event.Message.(type) {
+
+	case *linebot.ImageMessage:
+		return &pubsub.PubSubMessage{
+			CreatedAt:     time.Now(),
+			LineUserID:    event.Source.UserID,
+			MessageType:   "image",
+			ImageFileName: fmt.Sprintf("%s-%s.jpg", msg.ID, time.Now().Format("20060102150405")),
+		}, nil
+
+	case *linebot.TextMessage:
+		return &pubsub.PubSubMessage{
+			CreatedAt:   time.Now(),
+			LineUserID:  event.Source.UserID,
+			MessageType: "text",
+			Query:       msg.Text,
+		}, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported message type: %T", msg)
+	}
 }

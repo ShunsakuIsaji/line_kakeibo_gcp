@@ -24,8 +24,10 @@ func main() {
 	}
 
 	handler := &line.Handler{
-		Bot:        bot,
-		BucketName: os.Getenv("RECEIPT_BUCKET"),
+		Bot:           bot,
+		BucketName:    os.Getenv("RECEIPT_BUCKET"),
+		GcpProjectID:  os.Getenv("GOOGLE_PROJECT_ID"),
+		PubSubTopicID: os.Getenv("API_PUBLISH_TOPIC_ID"),
 	}
 
 	http.HandleFunc("/webhook", func(w http.ResponseWriter, r *http.Request) {
