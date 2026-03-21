@@ -3,65 +3,78 @@ package gemini
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
 )
 
-type geminiRequest struct {
-	contents []struct {
-		parts []struct {
-			inlineData struct {
-				mimeType string `json:"mimeType"`
-				data     string `json:"data"`
-			} `json:"inlineData"`
-			text string `json:"text"`
-		} `json:"parts"`
-	} `json:"contents"`
-	generetionConfig struct {
-		responseMimeType string `json:"responseMimeType"`
-		responseSchema   struct {
-			typeof     string `json:"type"`
-			properties struct {
-				Date struct {
-					typeof      string `json:"type"`
-					description string `json:"description"`
-				} `json:"Date"`
-				TotalAmount struct {
-					typeof      string `json:"type"`
-					description string `json:"description"`
-				} `json:"TotalAmount"`
-				Shopname struct {
-					typeof      string `json:"type"`
-					description string `json:"description"`
-				} `json:"Shopname"`
-				Category struct {
-					typeof      string `json:"type"`
-					description string `json:"description"`
-				} `json:"Category"`
-				Memo struct {
-					typeof      string `json:"type"`
-					description string `json:"description"`
-				} `json:"Memo"`
-			} `json:"properties"`
-			required []string `json:"required"`
-		} `json:"responseSchema"`
-	} `json:"generationConfig"`
+type GeminiPart struct {
+	InlineData *GeminiInlineData `json:"inlineData,omitempty"`
+	Text       *string           `json:"text,omitempty"`
 }
 
-type geminiResponse struct {
-	Date        string `json:"Date"`
-	TotalAmount string `json:"TotalAmount"`
-	Shopname    string `json:"Shopname"`
-	Category    string `json:"Category"`
-	Memo        string `json:"Memo"`
+type GeminiInlineData struct {
+	MimeType string `json:"mimeType"`
+	Data     string `json:"data"`
 }
 
-func getGeminiRequestBody(imageData string) *geminiRequest {
-	requestBody := new(geminiRequest)
-	requestBody.contents[0].parts[0].inlineData.mimeType = "image/jpeg"
-	requestBody.contents[0].parts[0].inlineData.data = imageData
-	requestBody.contents[0].parts[0].text = `
+type GeminiContents struct {
+	Parts []GeminiPart `json:"parts"`
+}
+
+type GeminiPropaty struct {
+	Typeof      string `json:"type"`
+	Description string `json:"description"`
+}
+
+type GeminiPropaties struct {
+	Date        GeminiPropaty `json:"date"`
+	TotalAmount GeminiPropaty `json:"totalAmount"`
+	ShopName    GeminiPropaty `json:"shopname"`
+	Category    GeminiPropaty `json:"category"`
+	Memo        GeminiPropaty `json:"memo"`
+	Confidence  GeminiPropaty `json:"confidence,omitempty"`
+}
+
+type GeminiSchema struct {
+	Typeof     string          `json:"type"`
+	Properties GeminiPropaties `json:"properties"`
+	Required   []string        `json:"required"`
+}
+
+type GeminiGenerationConfig struct {
+	ResponseMimeType string       `json:"responseMimeType"`
+	ResponseSchema   GeminiSchema `json:"responseSchema"`
+}
+
+type GeminiRequest struct {
+	Contents         []GeminiContents       `json:"contents"`
+	GenerationConfig GeminiGenerationConfig `json:"generationConfig"`
+}
+
+type GeminiResponse struct {
+	Date        string   `json:"date"`
+	TotalAmount int      `json:"totalAmount"`
+	ShopName    string   `json:"shopname"`
+	Category    string   `json:"category"`
+	Memo        string   `json:"memo"`
+	Confidence  *float64 `json:"confidence,omitempty"`
+}
+
+type GeminiAPIResponse struct {
+	Candidates []struct {
+		Content struct {
+			Parts []struct {
+				Text string `json:"text"`
+			} `json:"parts"`
+		} `json:"content"`
+	} `json:"candidates"`
+	// 他のフィールドは無視される
+}
+
+func GetGeminiRequestBody(imageData string) *GeminiRequest {
+	prompt := `
 	あなたはレシートの画像から情報を抽出するプロフェッショナルです。
 添付された画像を分析し、分析結果をAPI設定で指定されたJSONスキーマで出力してください。
 - "Date": レシートに記載されている購入日付 (YYYY-MM-DD形式)。記載されていない場合、読み取れない場合は空文字列("")で構いません。
@@ -72,23 +85,59 @@ func getGeminiRequestBody(imageData string) *geminiRequest {
  
 分析の際は、特に "TotalAmount" と "ShopName" の抽出精度を最大限に高めてください。
 `
-	requestBody.generetionConfig.responseMimeType = "application/json"
-	requestBody.generetionConfig.responseSchema.typeof = "object"
-	requestBody.generetionConfig.responseSchema.properties.Date.typeof = "string"
-	requestBody.generetionConfig.responseSchema.properties.Date.description = "画像のレシートから読み取れる購入日付をYYYY-MM-DD形式で出力する"
-	requestBody.generetionConfig.responseSchema.properties.TotalAmount.typeof = "number"
-	requestBody.generetionConfig.responseSchema.properties.TotalAmount.description = "画像のレシートから読み取れる税込の合計金額を数値で出力する"
-	requestBody.generetionConfig.responseSchema.properties.Shopname.typeof = "string"
-	requestBody.generetionConfig.responseSchema.properties.Shopname.description = "画像のレシートから読み取れる店舗名（スーパー名、店名など）を出力する"
-	requestBody.generetionConfig.responseSchema.properties.Category.typeof = "string"
-	requestBody.generetionConfig.responseSchema.properties.Category.description = "画像のレシートから読み取れる購入品目のカテゴリを、「食費・外食・日用品・その他」のうち最も近いものを出力する。食費はスーパーや食材店などの食料品購入、外食はレストランやカフェなどでの飲食、日用品は生活必需品の購入、その他は上記以外のカテゴリを指す"
-	requestBody.generetionConfig.responseSchema.properties.Memo.typeof = "string"
-	requestBody.generetionConfig.responseSchema.properties.Memo.description = "レシートから、トイレットペーパーが含まれていれば「トイレットペーパー購入」、ティッシュペーパーが含まれていれば「ティッシュ購入」、衣類用洗剤が含まれていれば「衣類用洗剤購入」、衣類用柔軟剤が含まれていれば「柔軟剤購入」、食器用洗剤が含まれていれば「食器用洗剤購入」、特に含まれていなければ「なし」と出力する。複数当てはまる場合は、カンマ区切りで全て出力する"
-	requestBody.generetionConfig.responseSchema.required = []string{"Date", "TotalAmount", "Shopname", "Category", "Memo"}
-	return requestBody
+	return &GeminiRequest{
+		Contents: []GeminiContents{
+			{
+				Parts: []GeminiPart{
+					{
+						InlineData: &GeminiInlineData{
+							MimeType: "image/jpeg",
+							Data:     imageData,
+						},
+					},
+					{
+						Text: &prompt,
+					},
+				},
+			},
+		},
+		GenerationConfig: GeminiGenerationConfig{
+			ResponseMimeType: "application/json",
+			ResponseSchema: GeminiSchema{
+				Typeof: "OBJECT",
+				Properties: GeminiPropaties{
+					Date: GeminiPropaty{
+						Typeof:      "STRING",
+						Description: "画像のレシートから読み取れる購入日付をYYYY-MM-DD形式で出力する",
+					},
+					TotalAmount: GeminiPropaty{
+						Typeof:      "NUMBER",
+						Description: "画像のレシートから読み取れる税込の合計金額を数値で出力する",
+					},
+					ShopName: GeminiPropaty{
+						Typeof:      "STRING",
+						Description: "画像のレシートから読み取れる店舗名（スーパー名、店名など）を出力する",
+					},
+					Category: GeminiPropaty{
+						Typeof:      "STRING",
+						Description: "画像のレシートから読み取れる購入品目のカテゴリを、「食費・外食・日用品・その他」のうち最も近いものを出力する。食費はスーパーや食材店などの食料品購入、外食はレストランやカフェなどでの飲食、日用品は生活必需品の購入、その他は上記以外のカテゴリを指す",
+					},
+					Memo: GeminiPropaty{
+						Typeof:      "STRING",
+						Description: "レシートから、トイレットペーパーが含まれていれば「トイレットペーパー購入」、ティッシュペーパーが含まれていれば「ティッシュ購入」、衣類用洗剤が含まれていれば「衣類用洗剤購入」、衣類用柔軟剤が含まれていれば「柔軟剤購入」、食器用洗剤が含まれていれば「食器用洗剤購入」、特に含まれていなければ「なし」と出力する。複数当てはまる場合は、カンマ区切りで全て出力する",
+					},
+					Confidence: GeminiPropaty{
+						Typeof:      "NUMBER",
+						Description: "Geminiが解析結果にどれだけ自信を持っているかを0から1の数値で出力する。1に近いほど自信が高いことを示す。不明な場合は省略しても構いません。",
+					},
+				},
+				Required: []string{"date", "totalAmount", "shopname", "category", "memo"},
+			},
+		},
+	}
 }
 
-func sendRequestToGemini(endpoint string, body []byte) ([]byte, error) {
+func SendRequestToGemini(endpoint string, body []byte) ([]byte, error) {
 
 	resp, err := http.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -98,6 +147,8 @@ func sendRequestToGemini(endpoint string, body []byte) ([]byte, error) {
 	defer resp.Body.Close()
 
 	responseBody, err := io.ReadAll(resp.Body)
+	log.Printf("gemini status=%d body=%s", resp.StatusCode, string(responseBody))
+
 	if err != nil {
 		log.Printf("failed to read response from Gemini : %S", err)
 		return nil, err
@@ -106,20 +157,39 @@ func sendRequestToGemini(endpoint string, body []byte) ([]byte, error) {
 	return responseBody, nil
 }
 
-func getGeminiResponse(GeminiEndpoint string, requestbody *geminiRequest) (*geminiResponse, error) {
+func GetGeminiResponse(GeminiEndpoint string, requestbody *GeminiRequest) (*GeminiResponse, error) {
 	body, err := json.Marshal(requestbody)
 	if err != nil {
 		return nil, err
 	}
 
-	responseBody, err := sendRequestToGemini(GeminiEndpoint, body)
+	responseBody, err := SendRequestToGemini(GeminiEndpoint, body)
 	if err != nil {
 		return nil, err
 	}
 
-	var geminiResponse geminiResponse
-	err = json.Unmarshal(responseBody, &geminiResponse)
+	var geminiResponse GeminiResponse
+	var apiResponse GeminiAPIResponse
+	err = json.Unmarshal(responseBody, &apiResponse)
 	if err != nil {
+		return nil, err
+	}
+
+	if len(apiResponse.Candidates) == 0 || len(apiResponse.Candidates[0].Content.Parts) == 0 {
+		return nil, fmt.Errorf("no candidates or parts in Gemini response")
+	}
+
+	// 最初の候補の最初のパートのテキストを解析結果とみなす
+	geminiResult := apiResponse.Candidates[0].Content.Parts[0].Text
+	// debag
+	log.Printf("geminiResult raw=%q", geminiResult)
+
+	if geminiResult == "" {
+		return nil, fmt.Errorf("no text part in Gemini response")
+	}
+	err = json.Unmarshal([]byte(geminiResult), &geminiResponse)
+	if err != nil {
+		log.Printf("inner unmarshal error: %v", err)
 		return nil, err
 	}
 

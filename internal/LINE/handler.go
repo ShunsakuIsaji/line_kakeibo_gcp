@@ -45,7 +45,7 @@ func (h *Handler) HandleEventAPI(ctx context.Context, event *linebot.Event) erro
 			return err
 		}
 
-		publishMessage, err := getPublishMessageFromEvent(event)
+		publishMessage, err := getPublishMessageFromEvent(event, filename)
 		if err != nil {
 			return err
 		}
@@ -70,7 +70,7 @@ func (h *Handler) HandleEventAPI(ctx context.Context, event *linebot.Event) erro
 
 		log.Printf("text received: %s", msg.Text)
 
-		publishMessage, err := getPublishMessageFromEvent(event)
+		publishMessage, err := getPublishMessageFromEvent(event, "")
 		if err != nil {
 			return err
 		}
@@ -99,7 +99,7 @@ func (h *Handler) HandleEventAPI(ctx context.Context, event *linebot.Event) erro
 	return nil
 }
 
-func getPublishMessageFromEvent(event *linebot.Event) (*pubsub.PubSubMessage, error) {
+func getPublishMessageFromEvent(event *linebot.Event, filename string) (*pubsub.PubSubMessage, error) {
 	if event.Source == nil || event.Source.UserID == "" {
 		return nil, fmt.Errorf("invalid event source")
 	}
@@ -110,7 +110,7 @@ func getPublishMessageFromEvent(event *linebot.Event) (*pubsub.PubSubMessage, er
 			CreatedAt:     time.Now(),
 			LineUserID:    event.Source.UserID,
 			MessageType:   "image",
-			ImageFileName: fmt.Sprintf("%s-%s.jpg", msg.ID, time.Now().Format("20060102150405")),
+			ImageFileName: filename,
 		}, nil
 
 	case *linebot.TextMessage:

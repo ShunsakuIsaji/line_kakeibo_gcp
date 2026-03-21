@@ -1,14 +1,17 @@
-package worker
+package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	gcs "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/GCS"
+	gemini "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/Gemini"
 	line "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/LINE"
 	pubsub "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/pubsub"
 	"github.com/joho/godotenv"
@@ -16,10 +19,12 @@ import (
 )
 
 type Handler struct {
-	Bot           *linebot.Client
-	BucketName    string
-	GcpProjectID  string
-	PubSubTopicID string
+	Bot             *linebot.Client
+	ImageBucketName string
+	JSONBuckatName  string
+	GcpProjectID    string
+	PubSubTopicID   string
+	GeminiEndpoint  string
 }
 
 type SubscribedMessage struct {
@@ -50,8 +55,9 @@ func (h *Handler) SubscriptionHandler(w http.ResponseWriter, r *http.Request) {
 	// image取得
 	if pubSubMsg.MessageType == "image" {
 		log.Printf("Image file name: %s", pubSubMsg.ImageFileName)
-		// ここでCloud Storageから画像をダウンロードして処理することができます
-		data, err := gcs.DownloadFromGCS(r.Context(), h.BucketName, pubSubMsg.ImageFileName)
+
+		// GCSから画像をダウンロードする
+		data, err := gcs.DownloadFromGCS(r.Context(), h.ImageBucketName, pubSubMsg.ImageFileName)
 		if err != nil {
 			log.Printf("failed to download image: %s", err)
 			line.PushMessage(h.Bot, pubSubMsg.LineUserID, fmt.Sprintf("画像のダウンロードに失敗しました: %s", err))
@@ -59,13 +65,55 @@ func (h *Handler) SubscriptionHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("Downloaded image data size: %d bytes", len(data))
-		// 例えば、画像解析やOCR処理などをここで行うことができます
+
+		// Gemini APIに送信して結果を取得する
+
+		geminiReqBody := gemini.GetGeminiRequestBody(base64.StdEncoding.EncodeToString(data))
+
+		geminiResp, err := gemini.GetGeminiResponse(h.GeminiEndpoint, geminiReqBody)
+
+		if err != nil {
+			log.Printf("failed to unmarshal Gemini response: %s", err)
+			line.PushMessage(h.Bot, pubSubMsg.LineUserID, fmt.Sprintf("Gemini APIのレスポンスの解析に失敗しました: %s", err))
+			// エラーは返さない
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		log.Printf("Gemini response: %+v", geminiResp)
+
+		// Geminiのレスポンスが成功したら、StorageにJSONを保存する
+		jsonFileName := strings.Replace(pubSubMsg.ImageFileName, ".jpg", ".json", 1)
+		jsonData, _ := json.Marshal(geminiResp)
+		err = gcs.UploadToGCS(r.Context(), h.JSONBuckatName, jsonFileName, bytes.NewReader(jsonData))
+		if err != nil {
+			log.Printf("failed to upload JSON to GCS: %s", err)
+			line.PushMessage(h.Bot, pubSubMsg.LineUserID, fmt.Sprintf("解析結果の保存に失敗しました: %s", err))
+			// エラーは返さない
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		if geminiResp.TotalAmount == 0 {
+			line.PushMessage(h.Bot, pubSubMsg.LineUserID, "レシートの解析に失敗しました。画像が不鮮明な可能性があります。")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// LINEに返信
+		replyMsg := fmt.Sprintf("レシート情報:\n日付: %s\n合計金額: %d\n店舗名: %s\nカテゴリ: %s\nメモ: %s\n信頼度: %.2f",
+			geminiResp.Date, geminiResp.TotalAmount, geminiResp.ShopName, geminiResp.Category, geminiResp.Memo, *geminiResp.Confidence)
+		line.PushMessage(h.Bot, pubSubMsg.LineUserID, replyMsg)
+
 	} else if pubSubMsg.MessageType == "text" {
 		log.Printf("Received text query: %s", pubSubMsg.Query)
 		line.PushMessage(h.Bot, pubSubMsg.LineUserID, fmt.Sprintf("テキストクエリを受け取りました: %s", pubSubMsg.Query))
-		// 例えば、テキストクエリに対してAI処理を行い、結果をLINEに返信することができます
+
+	} else {
+		log.Printf("Unknown message type: %s", pubSubMsg.MessageType)
+		line.PushMessage(h.Bot, pubSubMsg.LineUserID, fmt.Sprintf("対応していないメッセージタイプです: %s", pubSubMsg.MessageType))
+		// エラーは返さない
 	}
-	// 例えば、LINEへの返信や、Cloud Storageへの保存など
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -91,10 +139,12 @@ func main() {
 	}
 
 	handler := &Handler{
-		Bot:           bot,
-		BucketName:    os.Getenv("RECEIPT_BUCKET"),
-		GcpProjectID:  os.Getenv("GOOGLE_PROJECT_ID"),
-		PubSubTopicID: os.Getenv("API_PUBLISH_TOPIC_ID"),
+		Bot:             bot,
+		ImageBucketName: os.Getenv("RECEIPT_BUCKET"),
+		JSONBuckatName:  os.Getenv("JSON_BUCKET"),
+		GcpProjectID:    os.Getenv("GOOGLE_PROJECT_ID"),
+		PubSubTopicID:   os.Getenv("API_PUBLISH_TOPIC_ID"),
+		GeminiEndpoint:  os.Getenv("GEMINI_API_ENDPOINT") + os.Getenv("GEMINI_API_KEY"),
 	}
 
 	http.HandleFunc("/callback", handler.SubscriptionHandler)
