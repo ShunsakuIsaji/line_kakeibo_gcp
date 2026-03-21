@@ -8,7 +8,7 @@ import (
 	"time"
 
 	gcs "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/GCS"
-	pubsub "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/PubSub"
+	pubsub "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/pubsub"
 	"github.com/line/line-bot-sdk-go/v8/linebot"
 )
 
