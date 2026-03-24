@@ -9,6 +9,7 @@ import (
 
 	gcs "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/GCS"
 	pubsub "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/pubsub"
+	"github.com/jaevor/go-nanoid"
 	"github.com/line/line-bot-sdk-go/v8/linebot"
 )
 
@@ -37,15 +38,19 @@ func (h *Handler) HandleEventAPI(ctx context.Context, event *linebot.Event) erro
 		}
 		defer content.Content.Close()
 
-		now := time.Now().Format("20060102150405")
-		filename := fmt.Sprintf("%s-%s.jpg", msg.ID, now)
+		genId, err := nanoid.Standard(10)
+		if err != nil {
+			return err
+		}
+		receiptID := genId()
 
+		filename := fmt.Sprintf("%s.jpg", receiptID)
 		err = gcs.UploadToGCS(ctx, h.BucketName, filename, content.Content)
 		if err != nil {
 			return err
 		}
 
-		publishMessage, err := getPublishMessageFromEvent(event, filename)
+		publishMessage, err := getPublishMessageFromEvent(event, receiptID)
 		if err != nil {
 			return err
 		}
@@ -99,7 +104,7 @@ func (h *Handler) HandleEventAPI(ctx context.Context, event *linebot.Event) erro
 	return nil
 }
 
-func getPublishMessageFromEvent(event *linebot.Event, filename string) (*pubsub.PubSubMessage, error) {
+func getPublishMessageFromEvent(event *linebot.Event, receiptID string) (*pubsub.PubSubMessage, error) {
 	if event.Source == nil || event.Source.UserID == "" {
 		return nil, fmt.Errorf("invalid event source")
 	}
@@ -110,7 +115,8 @@ func getPublishMessageFromEvent(event *linebot.Event, filename string) (*pubsub.
 			CreatedAt:     time.Now(),
 			LineUserID:    event.Source.UserID,
 			MessageType:   "image",
-			ImageFileName: filename,
+			ImageFileName: fmt.Sprintf("%s.jpg", receiptID),
+			ReceiptID:     receiptID,
 		}, nil
 
 	case *linebot.TextMessage:
@@ -119,6 +125,7 @@ func getPublishMessageFromEvent(event *linebot.Event, filename string) (*pubsub.
 			LineUserID:  event.Source.UserID,
 			MessageType: "text",
 			Query:       msg.Text,
+			ReceiptID:   receiptID,
 		}, nil
 
 	default:

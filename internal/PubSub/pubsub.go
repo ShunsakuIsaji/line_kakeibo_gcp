@@ -9,6 +9,7 @@ import (
 )
 
 type PubSubMessage struct {
+	ReceiptID     string    `json:"receipt_id"`
 	CreatedAt     time.Time `json:"created_at"`
 	LineUserID    string    `json:"line_user_id"`
 	MessageType   string    `json:"message_type"`

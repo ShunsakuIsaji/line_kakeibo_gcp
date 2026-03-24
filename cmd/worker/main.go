@@ -13,6 +13,7 @@ import (
 	gcs "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/GCS"
 	gemini "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/Gemini"
 	line "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/LINE"
+	bq "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/bq"
 	pubsub "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/pubsub"
 	"github.com/joho/godotenv"
 	"github.com/line/line-bot-sdk-go/v8/linebot"
@@ -21,10 +22,12 @@ import (
 type Handler struct {
 	Bot             *linebot.Client
 	ImageBucketName string
-	JSONBuckatName  string
+	JSONBucketName  string
 	GcpProjectID    string
 	PubSubTopicID   string
 	GeminiEndpoint  string
+	BqDatasetID     string
+	BqTableID       string
 }
 
 type SubscribedMessage struct {
@@ -85,7 +88,7 @@ func (h *Handler) SubscriptionHandler(w http.ResponseWriter, r *http.Request) {
 		// Geminiのレスポンスが成功したら、StorageにJSONを保存する
 		jsonFileName := strings.Replace(pubSubMsg.ImageFileName, ".jpg", ".json", 1)
 		jsonData, _ := json.Marshal(geminiResp)
-		err = gcs.UploadToGCS(r.Context(), h.JSONBuckatName, jsonFileName, bytes.NewReader(jsonData))
+		err = gcs.UploadToGCS(r.Context(), h.JSONBucketName, jsonFileName, bytes.NewReader(jsonData))
 		if err != nil {
 			log.Printf("failed to upload JSON to GCS: %s", err)
 			line.PushMessage(h.Bot, pubSubMsg.LineUserID, fmt.Sprintf("解析結果の保存に失敗しました: %s", err))
@@ -96,6 +99,17 @@ func (h *Handler) SubscriptionHandler(w http.ResponseWriter, r *http.Request) {
 
 		if geminiResp.TotalAmount == 0 {
 			line.PushMessage(h.Bot, pubSubMsg.LineUserID, "レシートの解析に失敗しました。画像が不鮮明な可能性があります。")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// BigQueryに保存する
+		bqData := setBQdata(&pubSubMsg, geminiResp)
+		err = bq.InsertToBQ(r.Context(), h.GcpProjectID, h.BqDatasetID, h.BqTableID, bqData)
+		if err != nil {
+			log.Printf("failed to insert data to BigQuery: %s", err)
+			line.PushMessage(h.Bot, pubSubMsg.LineUserID, fmt.Sprintf("データベースへの保存に失敗しました: %s", err))
+			// エラーは返さない
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -141,10 +155,12 @@ func main() {
 	handler := &Handler{
 		Bot:             bot,
 		ImageBucketName: os.Getenv("RECEIPT_BUCKET"),
-		JSONBuckatName:  os.Getenv("JSON_BUCKET"),
+		JSONBucketName:  os.Getenv("JSON_BUCKET"),
 		GcpProjectID:    os.Getenv("GOOGLE_PROJECT_ID"),
 		PubSubTopicID:   os.Getenv("API_PUBLISH_TOPIC_ID"),
 		GeminiEndpoint:  os.Getenv("GEMINI_API_ENDPOINT") + os.Getenv("GEMINI_API_KEY"),
+		BqDatasetID:     os.Getenv("BQ_DATASET_ID"),
+		BqTableID:       os.Getenv("BQ_TABLE_ID"),
 	}
 
 	http.HandleFunc("/callback", handler.SubscriptionHandler)
@@ -155,4 +171,35 @@ func main() {
 
 	log.Printf("Worker is listening on port %s...", port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+
+func setBQdata(pubSubMsg *pubsub.PubSubMessage, geminiResp *gemini.GeminiResponse) *bq.BQdata {
+	return &bq.BQdata{
+		ReceiptID:       pubSubMsg.ReceiptID,
+		LineUserID:      pubSubMsg.LineUserID,
+		CreatedAt:       pubSubMsg.CreatedAt,
+		Date:            geminiResp.Date,
+		TotalAmount:     geminiResp.TotalAmount,
+		ShopName:        geminiResp.ShopName,
+		ShopAddress:     safeGetString(geminiResp.ShopAddress),
+		Category:        geminiResp.Category,
+		Memo:            geminiResp.Memo,
+		Confidence:      safeGetFloat64(geminiResp.Confidence),
+		EventJSONFile:   fmt.Sprintf("%s.json", strings.Replace(pubSubMsg.ImageFileName, ".jpg", "", 1)),
+		ReceiptFileName: pubSubMsg.ImageFileName,
+	}
+}
+
+func safeGetString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
+func safeGetFloat64(f *float64) float64 {
+	if f == nil {
+		return 0.0
+	}
+	return *f
 }

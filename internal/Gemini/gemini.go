@@ -32,6 +32,7 @@ type GeminiPropaties struct {
 	Date        GeminiPropaty `json:"date"`
 	TotalAmount GeminiPropaty `json:"totalAmount"`
 	ShopName    GeminiPropaty `json:"shopname"`
+	ShopAddress GeminiPropaty `json:"shopAddress,omitempty"`
 	Category    GeminiPropaty `json:"category"`
 	Memo        GeminiPropaty `json:"memo"`
 	Confidence  GeminiPropaty `json:"confidence,omitempty"`
@@ -57,6 +58,7 @@ type GeminiResponse struct {
 	Date        string   `json:"date"`
 	TotalAmount int      `json:"totalAmount"`
 	ShopName    string   `json:"shopname"`
+	ShopAddress *string  `json:"shopAddress,omitempty"`
 	Category    string   `json:"category"`
 	Memo        string   `json:"memo"`
 	Confidence  *float64 `json:"confidence,omitempty"`
@@ -80,8 +82,10 @@ func GetGeminiRequestBody(imageData string) *GeminiRequest {
 - "Date": レシートに記載されている購入日付 (YYYY-MM-DD形式)。記載されていない場合、読み取れない場合は空文字列("")で構いません。
 - "TotalAmount": レシートに記載されている税込の合計金額 (数値)。
 - "ShopName": レシートに記載されている店舗名（スーパー名、店名など）。
+- "ShopAddress": レシートに記載されている店舗の住所。 記載されていない場合、読み取れない場合は空文字列("")で構いません。郵便番号は記載しないでください。
 - "Category": 購入品目のカテゴリを「食費・外食・日用品・その他」のうち最も近いもの。 食費はスーパーや食材店などの食料品購入、外食はレストランやカフェなどでの飲食、日用品は生活必需品の購入、その他は上記以外のカテゴリを指す。
-- "Memo": レシートにトイレットペーパー、ティッシュペーパー、衣類用洗剤、衣類用柔軟剤、食器用洗剤が含まれている場合、それぞれ「トイレットペーパー購入」、「ティッシュ購入」、「衣類用洗剤購入」、「柔軟剤購入」、「食器用洗剤購入」と出力し、含まれていない場合は「なし」と出力。複数当てはまる場合はカンマ区切りで全て出力する。
+- "Memo": レシートに酒類が含まれている場合は「酒類購入」と出力し、含まれていない場合は「なし」と出力。
+- "Confidence": 解析結果に対する自信度を0から1の数値で出力。1に近いほど自信が高いことを示す。不明な場合は省略しても構いません。
  
 分析の際は、特に "TotalAmount" と "ShopName" の抽出精度を最大限に高めてください。
 `
@@ -122,9 +126,13 @@ func GetGeminiRequestBody(imageData string) *GeminiRequest {
 						Typeof:      "STRING",
 						Description: "画像のレシートから読み取れる購入品目のカテゴリを、「食費・外食・日用品・その他」のうち最も近いものを出力する。食費はスーパーや食材店などの食料品購入、外食はレストランやカフェなどでの飲食、日用品は生活必需品の購入、その他は上記以外のカテゴリを指す",
 					},
+					ShopAddress: GeminiPropaty{
+						Typeof:      "STRING",
+						Description: "画像のレシートから読み取れる店舗の住所を出力する。記載されていない場合、読み取れない場合は空文字列で構いません。郵便番号は記載しないでください。",
+					},
 					Memo: GeminiPropaty{
 						Typeof:      "STRING",
-						Description: "レシートから、トイレットペーパーが含まれていれば「トイレットペーパー購入」、ティッシュペーパーが含まれていれば「ティッシュ購入」、衣類用洗剤が含まれていれば「衣類用洗剤購入」、衣類用柔軟剤が含まれていれば「柔軟剤購入」、食器用洗剤が含まれていれば「食器用洗剤購入」、特に含まれていなければ「なし」と出力する。複数当てはまる場合は、カンマ区切りで全て出力する",
+						Description: "レシートから、酒類が含まれていれば「酒類購入」と出力し、含まれていない場合は「なし」と出力する。",
 					},
 					Confidence: GeminiPropaty{
 						Typeof:      "NUMBER",
