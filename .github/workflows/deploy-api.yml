@@ -1,0 +1,78 @@
+name: Deploy API
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "cmd/api/**"
+      - "internal/**"
+      - "docker/api.Dockerfile"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/deploy-api.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: ${{ secrets.GCP_REGION }}
+  REPOSITORY: ${{ secrets.GAR_REPOSITORY }}
+  API_SERVICE_ACCOUNT: ${{ secrets.API_SA }}  
+  RECEIPT_BUCKET: ${{ secrets.RECEIPT_BUCKET }}
+  JSON_BUCKET: ${{ secrets.JSON_BUCKET }}
+  API_PUBLISH_TOPIC_ID: ${{ secrets.API_PUBLISH_TOPIC_ID }}
+  SERVICE: line-kakeibo-api
+  IMAGE: api
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.DEPLOY_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build image
+        run: |
+          docker build \
+            -f docker/api.Dockerfile \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:latest \
+            .
+
+      - name: Push image
+        run: |
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:latest
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }}
+          flags: >-
+            --allow-unauthenticated
+            --memory=512Mi
+            --cpu=1
+            --min-instances=0
+            --max-instances=3
+            --concurrency=80
+            --timeout=60
+            --service-account=${{ env.API_SERVICE_ACCOUNT }}
+            --set-env-vars=RECEIPT_BUCKET=${{ env.RECEIPT_BUCKET }},JSON_BUCKET=${{ env.JSON_BUCKET }},GOOGLE_PROJECT_ID=${{ env.PROJECT_ID }},API_PUBLISH_TOPIC_ID=${{ env.API_PUBLISH_TOPIC_ID }}
+            --set-secrets=LINE_CHANNEL_SECRET=LINE_CHANNEL_SECRET:latest,LINE_CHANNEL_ACCESS_TOKEN=LINE_CHANNEL_ACCESS_TOKEN:latest

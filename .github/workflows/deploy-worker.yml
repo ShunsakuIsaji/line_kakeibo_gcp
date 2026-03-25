@@ -1,0 +1,80 @@
+name: Deploy Worker
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "cmd/worker/**"
+      - "internal/**"
+      - "docker/worker.Dockerfile"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/deploy-worker.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: ${{ secrets.GCP_REGION }}
+  REPOSITORY: ${{ secrets.GAR_REPOSITORY }}
+  RECEIPT_BUCKET: ${{ secrets.RECEIPT_BUCKET }}
+  JSON_BUCKET: ${{ secrets.JSON_BUCKET }}
+  WORKER_SERVICE_ACCOUNT: ${{ secrets.API_SA }}
+  GEMINI_API_ENDPOINT: ${{ secrets.GEMINI_API_ENDPOINT }}
+  BQ_DATASET_ID: ${{ secrets.BQ_DATASET_ID }}
+  BQ_TABLE_ID: ${{ secrets.BQ_TABLE_ID }}
+  SERVICE: line-kakeibo-worker
+  IMAGE: worker
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.DEPLOY_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGION }}-docker.pkg.dev --quiet
+
+      - name: Build image
+        run: |
+          docker build \
+            -f docker/worker.Dockerfile \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }} \
+            -t ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:latest \
+            .
+
+      - name: Push image
+        run: |
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }}
+          docker push ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:latest
+
+      - name: Deploy to Cloud Run
+        uses: google-github-actions/deploy-cloudrun@v2
+        with:
+          service: ${{ env.SERVICE }}
+          region: ${{ env.REGION }}
+          image: ${{ env.REGION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.IMAGE }}:${{ github.sha }}
+          flags: >-
+            --no-allow-unauthenticated
+            --memory=512Mi
+            --cpu=1
+            --min-instances=0
+            --max-instances=3
+            --concurrency=80
+            --timeout=300
+            --service-account=${{ env.WORKER_SERVICE_ACCOUNT }}
+            --set-env-vars=RECEIPT_BUCKET=${{ env.RECEIPT_BUCKET }},JSON_BUCKET=${{ env.JSON_BUCKET }},GOOGLE_PROJECT_ID=${{ env.PROJECT_ID }},GEMINI_API_ENDPOINT=${{ env.GEMINI_API_ENDPOINT }},BQ_DATASET_ID=${{ env.BQ_DATASET_ID }},BQ_TABLE_ID=${{ env.BQ_TABLE_ID }}
+            --set-secrets=LINE_CHANNEL_SECRET=LINE_CHANNEL_SECRET:latest,LINE_CHANNEL_ACCESS_TOKEN=LINE_CHANNEL_ACCESS_TOKEN:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest
