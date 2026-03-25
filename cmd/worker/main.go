@@ -125,7 +125,7 @@ func (h *Handler) SubscriptionHandler(w http.ResponseWriter, r *http.Request) {
 
 	} else {
 		log.Printf("Unknown message type: %s", pubSubMsg.MessageType)
-		line.PushMessage(h.Bot, pubSubMsg.LineUserID, fmt.Sprintf("対応していないメッセージタイプです: %s", pubSubMsg.MessageType))
+		line.PushMessage(h.Bot, pubSubMsg.LineUserID, fmt.Sprintf("対応していないメッセージタイプです!: %s", pubSubMsg.MessageType))
 		// エラーは返さない
 	}
 
