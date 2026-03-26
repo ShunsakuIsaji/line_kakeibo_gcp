@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"os"
 
-	line "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/LINE"
+	line "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/line"
 	"github.com/joho/godotenv"
 	"github.com/line/line-bot-sdk-go/v8/linebot"
 )
