@@ -7,7 +7,7 @@ import (
 	"log"
 	"time"
 
-	gcs "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/GCS"
+	gcs "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/gcs"
 	pubsub "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/pubsub"
 	"github.com/jaevor/go-nanoid"
 	"github.com/line/line-bot-sdk-go/v8/linebot"

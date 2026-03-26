@@ -10,10 +10,10 @@ import (
 	"os"
 	"strings"
 
-	gcs "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/GCS"
-	gemini "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/Gemini"
-	line "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/LINE"
 	bq "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/bq"
+	gcs "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/gcs"
+	gemini "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/gemini"
+	line "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/line"
 	pubsub "github.com/ShunsakuIsaji/line_kakeibo_gcp/internal/pubsub"
 	"github.com/joho/godotenv"
 	"github.com/line/line-bot-sdk-go/v8/linebot"
